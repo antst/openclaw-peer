@@ -1,0 +1,5 @@
+{
+  // The worker sees this config via OPENCLAW_STATE_DIR=/lane-cli. No shared Gateway secret is
+  // present; after the one bootstrap call it must authenticate with its paired device token.
+  gateway: { mode: "local", bind: "loopback" },
+}

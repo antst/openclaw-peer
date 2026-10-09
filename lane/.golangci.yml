@@ -1,0 +1,23 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: vendor
+  tests: true
+
+# Keep lint focused on compiler-adjacent checks; protocol behavior is covered
+# by the lane's test suite.
+linters:
+  default: none
+  enable:
+    - govet
+    - ineffassign
+    - unused
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

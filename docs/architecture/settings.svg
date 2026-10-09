@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1000" height="300" role="img" aria-labelledby="title">
+<title id="title">Settings flow: openclaw.json is read by the plugin at Gateway start; the plugin serves the resolved lane settings on the bridge unix socket and each worker asks for them once at process start with settings.get; lanes.credentialDir reaches every openclaw child through the environment; the daemon service.env names the product and, for a non-default path, the bridge socket.</title>
+<style>
+svg{--bg:#f5f6f4;--surface:#ffffff;--ink:#1b2320;--muted:#5a655f;--line:#c4ccc7;--bus:#0d7466;--bus-tint:#e1f1ed;--oc:#b0441c;--oc-tint:#f8ebe5;--ours:#3446a8;--ours-tint:#e7eaf8}
+@media (prefers-color-scheme:dark){svg{--bg:#111614;--surface:#19211e;--ink:#e2e8e4;--muted:#9ba7a1;--line:#3a4641;--bus:#45c6b2;--bus-tint:#133a33;--oc:#ee8c61;--oc-tint:#3b2219;--ours:#93a4ff;--ours-tint:#1f2750}}
+text{font-family:"IBM Plex Sans",-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:var(--ink)}
+.bg{fill:var(--bg)}
+.t{font-size:13.5px;font-weight:600}
+.s{font-size:11.5px;fill:var(--muted)}
+.l{font-size:12px}
+.l.bus,.m.bus{fill:var(--bus)} .l.oc,.m.oc{fill:var(--oc)} .l.ours,.m.ours{fill:var(--ours)} .m.muted{fill:var(--muted)}
+.m{font-family:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11.5px}
+.host{fill:none;stroke:var(--line);stroke-width:1.5;stroke-dasharray:6 5}
+.hostlbl{font-family:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11.5px;letter-spacing:.08em;fill:var(--muted)}
+.hostlbl.oc{fill:var(--oc)}
+.b-neutral{fill:var(--surface);stroke:var(--ink);stroke-width:1.5}
+.b-bus{fill:var(--bus-tint);stroke:var(--bus);stroke-width:1.8}
+.b-oc{fill:var(--surface);stroke:var(--oc);stroke-width:1.8}
+.b-ocarea{fill:var(--oc-tint);stroke:var(--oc);stroke-width:1.5}
+.b-ours{fill:var(--ours-tint);stroke:var(--ours);stroke-width:2.2}
+.b-note{fill:var(--surface);stroke:var(--line);stroke-width:1.2}
+.frame{fill:none;stroke:var(--muted);stroke-width:1.2;stroke-dasharray:4 4}
+.e-bus{stroke:var(--bus);stroke-width:1.8;fill:none}
+.e-oc{stroke:var(--oc);stroke-width:1.8;fill:none}
+.e-ours{stroke:var(--ours);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-ret{stroke-dasharray:5 4}
+.life{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 5}
+.div{stroke:var(--line);stroke-width:1}
+.fill-bus{fill:var(--bus)} .fill-oc{fill:var(--oc)} .fill-ours{fill:var(--ours)}
+</style>
+<defs>
+<marker id="ah-bus" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fill-bus"/></marker>
+<marker id="ah-oc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fill-oc"/></marker>
+<marker id="ah-ours" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fill-ours"/></marker>
+</defs>
+<rect class="bg" x="0" y="0" width="1000" height="300" rx="10"/>
+<rect class="b-oc" x="20" y="28" width="240" height="72" rx="6"/>
+<text class="t" x="36" y="52">openclaw.json</text>
+<text class="m muted" x="36" y="72">plugins.entries.sessionbus</text>
+<text class="s" x="36" y="90">agents · lanes · channels.sessionbus</text>
+<rect class="b-oc" x="20" y="118" width="240" height="72" rx="6"/>
+<text class="t" x="36" y="142">lanes.credentialDir</text>
+<text class="s" x="36" y="162">paired device: read · write · approvals</text>
+<text class="s" x="36" y="180">own openclaw.json, no token</text>
+<rect class="b-bus" x="20" y="208" width="240" height="72" rx="6"/>
+<text class="t" x="36" y="232">daemon service.env</text>
+<text class="m muted" x="36" y="252">SESSIONBUS_PRODUCTS</text>
+<text class="s" x="36" y="270">+ openclaw-peer, worker on PATH</text>
+<rect class="b-ours" x="340" y="28" width="170" height="72" rx="6"/>
+<text class="t" x="425" y="58" text-anchor="middle">plugin</text>
+<text class="s" x="425" y="78" text-anchor="middle">at Gateway start</text>
+<rect class="b-neutral" x="580" y="28" width="210" height="72" rx="6"/>
+<text class="t" x="685" y="52" text-anchor="middle">bridge socket</text>
+<text class="s" x="685" y="70" text-anchor="middle">0600 in a 0700 directory</text>
+<text class="m muted" x="685" y="88" text-anchor="middle">SESSIONBUS_OPENCLAW_BRIDGE</text>
+<rect class="b-bus" x="340" y="208" width="170" height="72" rx="6"/>
+<text class="t" x="425" y="238" text-anchor="middle">daemon</text>
+<text class="s" x="425" y="258" text-anchor="middle">Sessionbus</text>
+<rect class="b-ours" x="810" y="118" width="170" height="72" rx="6"/>
+<text class="t" x="895" y="148" text-anchor="middle">worker</text>
+<text class="s" x="895" y="168" text-anchor="middle">at process start</text>
+<line class="e-oc" x1="260" y1="64" x2="338" y2="64" marker-end="url(#ah-oc)"/>
+<text class="l oc" x="299" y="56" text-anchor="middle">reads</text>
+<line class="e-oc" x1="510" y1="64" x2="578" y2="64" marker-end="url(#ah-oc)"/>
+<text class="l oc" x="544" y="56" text-anchor="middle">listens</text>
+<polyline class="e-ours" points="790,64 895,64 895,116" marker-start="url(#ah-ours)" marker-end="url(#ah-ours)"/>
+<text class="m ours" x="845" y="56" text-anchor="middle">settings.get</text>
+<line class="e-oc" x1="260" y1="154" x2="808" y2="154" marker-end="url(#ah-oc)"/>
+<text class="m oc" x="534" y="146" text-anchor="middle">OPENCLAW_STATE_DIR · OPENCLAW_CONFIG_PATH</text>
+<text class="s" x="534" y="172" text-anchor="middle">env of every openclaw child, gateway secrets stripped</text>
+<line class="e-bus" x1="260" y1="244" x2="338" y2="244" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="299" y="236" text-anchor="middle">reads</text>
+<polyline class="e-bus" points="510,244 895,244 895,192" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="700" y="236" text-anchor="middle">launches one per spawn</text>
+<text class="s" x="530" y="268">same bridge path for the Gateway and the daemon</text>
+</svg>

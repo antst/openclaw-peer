@@ -1,0 +1,74 @@
+# The Gateway container image, state and mounts, shared by the running Gateway and the one-shot setup service.
+x-gateway-env: &gateway-env
+  OPENCLAW_STATE_DIR: /home/node/.openclaw
+  OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+x-gateway-base: &gateway-base
+  image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:${OPENCLAW_VERSION:-2026.8.2}}
+  volumes:
+    - ./.state:/home/node/.openclaw
+    - ./.pkg:/plugin-pkg:ro
+    - ../..:/plugin-src:ro
+    - bus-socket:/tmp/sb
+
+services:
+  openclaw-gateway:
+    <<: *gateway-base
+    environment:
+      <<: *gateway-env
+      # A dummy key for the codex harness' API-key route (X1). Safe only because this container has no route out:
+      # it is on the `internal` network, which reaches the mock and the codex fixture and nothing else.
+      OPENAI_API_KEY: fixture-not-a-real-key
+    networks: [internal]
+    depends_on:
+      - mock-model
+      - codex-fixture
+      - socket-bridge
+
+  # One-shot install/config steps (`compose run openclaw-setup ...`): `plugins install` needs the npm registry, so this
+  # service is on the default network (egress) — the running Gateway is not. It carries no key and never runs a turn.
+  openclaw-setup:
+    <<: *gateway-base
+    environment: *gateway-env
+    profiles: [setup]
+
+  mock-model:
+    networks: [internal]
+    image: node:24-alpine
+    environment:
+      MOCK_MODEL_PORT: 8000
+    command: ["node", "/app/mock-model.mjs"]
+    volumes:
+      - ./mock-model.mjs:/app/mock-model.mjs:ro
+      - ./mock-select.mjs:/app/mock-select.mjs:ro
+
+  # Fake Responses API for the real `codex app-server` (X1): the codex harness runs unmodified against it.
+  codex-fixture:
+    networks: [internal]
+    image: node:24-alpine
+    environment:
+      CODEX_FIXTURE_PORT: 8001
+      CODEX_FIXTURE_DELTAS: ${CODEX_FIXTURE_DELTAS:-0}
+    command: ["node", "/app/codex-fixture.mjs"]
+    volumes:
+      - ./codex-fixture.mjs:/app/codex-fixture.mjs:ro
+
+  socket-bridge:
+    # Both networks: it forwards to the host (default network, has egress) and shares a socket volume with the Gateway.
+    networks: [internal, default]
+    image: node:24-alpine
+    environment:
+      SMOKE_BRIDGE_PORT: ${SMOKE_BRIDGE_PORT:-47911}
+    command: ["node", "/app/socket-bridge.mjs", "container"]
+    volumes:
+      - ./socket-bridge.mjs:/app/socket-bridge.mjs:ro
+      - bus-socket:/tmp/sb
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+networks:
+  # No route to the internet: the Gateway can reach the mock model and the codex fixture, nothing else.
+  internal:
+    internal: true
+
+volumes:
+  bus-socket:

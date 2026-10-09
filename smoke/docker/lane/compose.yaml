@@ -1,0 +1,90 @@
+# The Gateway container image, state and mounts, shared by the running Gateway and the one-shot setup service.
+x-gateway-env: &gateway-env
+  OPENCLAW_STATE_DIR: /home/node/.openclaw
+  # `plugins install --force` writes the config via a same-dir temp-file-then-rename;
+  # renaming onto a single-file bind mount fails EBUSY. Bind-mount a directory
+  # instead and point the config path inside it.
+  OPENCLAW_CONFIG_PATH: /home/node/config/openclaw.json
+  # The plugin's worker bridge. The path lives in the volume shared with the tunnel sidecar, in a directory the
+  # sidecar prepares for uid 1000 (a bare volume root is root-owned and the plugin refuses to bind there).
+  SESSIONBUS_OPENCLAW_BRIDGE: /lane-bridge/b/bridge.sock
+x-gateway-base: &gateway-base
+  image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:${OPENCLAW_VERSION:-2026.8.2}}
+  volumes:
+    # SQLite state must be on a Docker volume, not a macOS bind mount.
+    - gateway-state:/home/node/.openclaw
+    - lane-cli:/lane-cli
+    - lane-bridge:/lane-bridge
+    - ./.state/config:/home/node/config
+    - ./lane-cli.json5:/lane-cli/openclaw.json:ro
+    - ../../..:/plugin-src:ro
+    - ./.state/pkg:/plugin-pkg:ro
+    - ${LANE_SMOKE_ROOT:-/tmp/oc-lane-smoke-unconfigured}/.state/ws/lane:${LANE_SMOKE_ROOT:-/tmp/oc-lane-smoke-unconfigured}/.state/ws/lane
+    - ${LANE_SMOKE_ROOT:-/tmp/oc-lane-smoke-unconfigured}/.state/ws/b:${LANE_SMOKE_ROOT:-/tmp/oc-lane-smoke-unconfigured}/.state/ws/b
+    - ${LANE_SMOKE_ROOT:-/tmp/oc-lane-smoke-unconfigured}/.state/ws/decoy-real:${LANE_SMOKE_ROOT:-/tmp/oc-lane-smoke-unconfigured}/.state/ws/decoy-real
+    - ${LANE_SMOKE_ROOT:-/tmp/oc-lane-smoke-unconfigured}/.state/decoy:${LANE_SMOKE_ROOT:-/tmp/oc-lane-smoke-unconfigured}/.state/decoy
+
+services:
+  openclaw-gateway:
+    <<: *gateway-base
+    environment:
+      <<: *gateway-env
+      # A dummy key for the codex harness' API-key route (X1). Safe only because this container has no route out
+      # (`internal` network: the mock model and the codex fixture, nothing else); every codex clause proves it first.
+      OPENAI_API_KEY: fixture-not-a-real-key
+    networks: [internal]
+    depends_on:
+      - mock-model
+      - codex-fixture
+      - bridge-tunnel
+
+  # One-shot install/config/chown steps (`compose run openclaw-setup ...`): `plugins install` needs the npm registry, so
+  # this service is on the default network (egress) — the running Gateway is not. It carries no key, never runs a turn.
+  openclaw-setup:
+    <<: *gateway-base
+    environment: *gateway-env
+    profiles: [setup]
+
+  # Docker-only transport for the worker bridge: published on loopback so the host tunnel (bridge-tunnel.mjs host)
+  # can reach the plugin's unix socket in the shared volume. See bridge-tunnel.mjs.
+  bridge-tunnel:
+    image: node:24-alpine
+    command: ["node", "/app/bridge-tunnel.mjs", "container"]
+    environment:
+      SESSIONBUS_OPENCLAW_BRIDGE: /lane-bridge/b/bridge.sock
+      LANE_BRIDGE_PORT: ${LANE_BRIDGE_PORT:-47912}
+    ports:
+      - "127.0.0.1:${LANE_BRIDGE_PORT:-47912}:${LANE_BRIDGE_PORT:-47912}"
+    volumes:
+      - ./bridge-tunnel.mjs:/app/bridge-tunnel.mjs:ro
+      - lane-bridge:/lane-bridge
+
+  # Fake Responses API for the real `codex app-server` (X1): the codex harness runs unmodified against it.
+  codex-fixture:
+    networks: [internal]
+    image: node:24-alpine
+    environment:
+      CODEX_FIXTURE_PORT: 8001
+    command: ["node", "/app/codex-fixture.mjs"]
+    volumes:
+      - ../codex-fixture.mjs:/app/codex-fixture.mjs:ro
+
+  mock-model:
+    networks: [internal]
+    image: node:24-alpine
+    command: ["node", "/app/spike-mock.mjs"]
+    volumes:
+      - ./spike-mock.mjs:/app/spike-mock.mjs:ro
+      - ./last-user.mjs:/app/last-user.mjs:ro
+      - ./.state/mock-log:/log
+
+networks:
+  # No route to the internet. The bridge-tunnel sidecar stays on the default network (it publishes a loopback port to
+  # the host) and reaches the Gateway through the shared volume, not the network.
+  internal:
+    internal: true
+
+volumes:
+  gateway-state:
+  lane-cli:
+  lane-bridge:

@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+
+src=$(CDPATH='' cd "$(dirname "$0")" && pwd -P)
+root="$HOME/.local/libexec/sessionbus/openclaw"
+[ ! -L "$root" ] || { echo 'Indirect package root; review before replacing.' >&2; exit 1; }
+mkdir -p "$root" "$HOME/.local/bin"
+set -- "$src"/openclaw-sessionbus-peer-*.tgz
+[ "$#" -eq 1 ] && [ -f "$1" ] || { echo 'Plugin package missing or ambiguous' >&2; exit 1; }
+plugin=$1
+install -m 755 "$src/openclaw-peer" "$root/openclaw-peer.new"
+mv -f "$root/openclaw-peer.new" "$root/openclaw-peer"
+rm -f "$root"/openclaw-sessionbus-peer-*.tgz
+cp "$plugin" "$root/"
+ln -sfn "$root/openclaw-peer" "$HOME/.local/bin/openclaw-peer"
+"$HOME/.local/bin/openclaw-peer" --version
+printf 'Installed %s.\n' "$HOME/.local/bin/openclaw-peer"
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) printf 'Add to your login profile: export PATH="$HOME/.local/bin:$PATH"\n';; esac
+printf 'Review plugin capabilities, then run: openclaw plugins install %s\n' "$root/$(basename "$plugin")"
+printf 'Restart the Gateway: openclaw gateway restart\n'
+printf 'Add openclaw-peer to SESSIONBUS_PRODUCTS in %s/sessionbus/service.env: SESSIONBUS_PRODUCTS=claude-peer,codex-peer,openclaw-peer\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+case "$(uname -s)" in Linux) printf 'Restart the daemon: systemctl --user restart sessionbus\n';; Darwin) printf 'Restart the daemon: launchctl kickstart -k gui/$(id -u)/net.antst.sessionbus\n';; esac

@@ -1,0 +1,97 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.24.x'
+  GOLANGCI_LINT_VERSION: 'v2.12.2'
+  ACTIONLINT_VERSION: 'v1.7.7'
+  # Matches the vendored Go kit (lane/vendor/github.com/antst/sessionbus); the Go parity
+  # tests start a private daemon and fail by name when these binaries are missing.
+  SESSIONBUS_VERSION: 'v0.5.12'
+
+jobs:
+  go:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: lane
+    env:
+      GOFLAGS: -mod=vendor
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: lane/go.sum
+      - name: Install Sessionbus for parity tests
+        working-directory: ${{ runner.temp }}
+        env:
+          GOFLAGS: ''
+        run: |
+          git clone --depth 1 --branch "$SESSIONBUS_VERSION" https://github.com/antst/sessionbus sessionbus-src
+          (cd sessionbus-src && go build -o "$RUNNER_TEMP/sessionbus-bin/" ./bus/cmd/sessionbus ./bus/cmd/sessionbus-call)
+          echo "$RUNNER_TEMP/sessionbus-bin" >> "$GITHUB_PATH"
+      - name: Format
+        run: |
+          unformatted=$(git ls-files '*.go' | grep -v '^vendor/' | while IFS= read -r file; do gofmt -l "$file"; done)
+          test -z "$unformatted"
+      - name: Build
+        run: go build -o "$RUNNER_TEMP/openclaw-peer" ./cmd/openclaw-peer
+      - name: Test
+        run: go test -timeout 600s ./...
+      - name: Race test
+        run: go test -race -timeout 900s ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Lint
+        # go install cannot resolve a versioned module under -mod=vendor; the lint run
+        # reads vendored modules through modules-download-mode in lane/.golangci.yml.
+        env:
+          GOFLAGS: ''
+        run: |
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+          golangci-lint run ./...
+
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Check smoke script syntax
+        run: bash -n smoke/docker/run.sh smoke/docker/lane/run.sh smoke/docker/lane/run_test.sh
+      - name: Test every lane smoke case
+        run: |
+          cases=$(sed -n '/^case "${1:-}" in$/,/^esac$/p' smoke/docker/lane/run_test.sh | sed -n 's/^  \([^*][^)]*\)) test_.* ;;$/\1/p')
+          test -n "$cases" || { echo "no run_test.sh cases extracted" >&2; exit 1; }
+          for case_name in $cases; do
+            bash smoke/docker/lane/run_test.sh "$case_name"
+          done
+
+  workflow-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - run: go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+      - run: actionlint

@@ -1,0 +1,64 @@
+{
+  "id": "sessionbus",
+  "name": "Sessionbus peer",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": { "tools": ["sessionbus"] },
+  "channels": ["sessionbus"],
+  "channelConfigs": {
+    "sessionbus": {
+      "label": "Sessionbus",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "enabled": { "type": "boolean" } }
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "socket": { "type": "string", "pattern": "^/" },
+      "busSessionBinding": { "type": "string", "enum": ["name", "sessionId", "singleton"], "default": "name" },
+      "lanes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agents", "credentialDir"],
+        "properties": {
+          "agents": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "description": { "type": "string", "maxLength": 120, "pattern": "^[^\\r\\n]*$" } }
+            }
+          },
+          "credentialDir": { "type": "string", "pattern": "^/" },
+          "auditLog": { "type": "string", "pattern": "^/" }
+        }
+      },
+      "agents": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "sessionKey": { "type": "string" },
+            "name": { "type": "string" },
+            "busSessionBinding": { "type": "string", "enum": ["name", "sessionId", "singleton"] },
+            "groups": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 930" width="1000" height="930" role="img" aria-labelledby="title">
+<title id="title">Lane sequence: spawn launches a worker, which fetches its settings from the plugin over the bridge, confirms its credential is not admin, creates the session, starts openclaw acp and registers its session key on the bridge; a run passes the slash-command filter into an ACP prompt, the worker answers permission requests by permission_mode and performs the lane agent's bus actions; a message to a working lane is steered through the plugin and acknowledged written, or falls back to not_running; losing the bridge closes the lane and the worker exits after a 30 second grace.</title>
+<style>
+svg{--bg:#f5f6f4;--surface:#ffffff;--ink:#1b2320;--muted:#5a655f;--line:#c4ccc7;--bus:#0d7466;--bus-tint:#e1f1ed;--oc:#b0441c;--oc-tint:#f8ebe5;--ours:#3446a8;--ours-tint:#e7eaf8}
+@media (prefers-color-scheme:dark){svg{--bg:#111614;--surface:#19211e;--ink:#e2e8e4;--muted:#9ba7a1;--line:#3a4641;--bus:#45c6b2;--bus-tint:#133a33;--oc:#ee8c61;--oc-tint:#3b2219;--ours:#93a4ff;--ours-tint:#1f2750}}
+text{font-family:"IBM Plex Sans",-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:var(--ink)}
+.bg{fill:var(--bg)}
+.t{font-size:13.5px;font-weight:600}
+.s{font-size:11.5px;fill:var(--muted)}
+.l{font-size:12px}
+.l.bus,.m.bus{fill:var(--bus)} .l.oc,.m.oc{fill:var(--oc)} .l.ours,.m.ours{fill:var(--ours)} .m.muted{fill:var(--muted)}
+.m{font-family:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11.5px}
+.host{fill:none;stroke:var(--line);stroke-width:1.5;stroke-dasharray:6 5}
+.hostlbl{font-family:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11.5px;letter-spacing:.08em;fill:var(--muted)}
+.hostlbl.oc{fill:var(--oc)}
+.b-neutral{fill:var(--surface);stroke:var(--ink);stroke-width:1.5}
+.b-bus{fill:var(--bus-tint);stroke:var(--bus);stroke-width:1.8}
+.b-oc{fill:var(--surface);stroke:var(--oc);stroke-width:1.8}
+.b-ocarea{fill:var(--oc-tint);stroke:var(--oc);stroke-width:1.5}
+.b-ours{fill:var(--ours-tint);stroke:var(--ours);stroke-width:2.2}
+.b-note{fill:var(--surface);stroke:var(--line);stroke-width:1.2}
+.frame{fill:none;stroke:var(--muted);stroke-width:1.2;stroke-dasharray:4 4}
+.e-bus{stroke:var(--bus);stroke-width:1.8;fill:none}
+.e-oc{stroke:var(--oc);stroke-width:1.8;fill:none}
+.e-ours{stroke:var(--ours);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.e-ret{stroke-dasharray:5 4}
+.life{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 5}
+.div{stroke:var(--line);stroke-width:1}
+.fill-bus{fill:var(--bus)} .fill-oc{fill:var(--oc)} .fill-ours{fill:var(--ours)}
+</style>
+<defs>
+<marker id="ah-bus" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fill-bus"/></marker>
+<marker id="ah-oc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fill-oc"/></marker>
+<marker id="ah-ours" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="fill-ours"/></marker>
+</defs>
+<rect class="bg" x="0" y="0" width="1000" height="930" rx="10"/>
+<rect class="b-neutral" x="20" y="20" width="140" height="48" rx="6"/>
+<text class="t" x="90" y="41" text-anchor="middle">caller</text>
+<text class="s" x="90" y="58" text-anchor="middle">peer or agent</text>
+<rect class="b-bus" x="220" y="20" width="140" height="48" rx="6"/>
+<text class="t" x="290" y="41" text-anchor="middle">daemon</text>
+<text class="s" x="290" y="58" text-anchor="middle">on the OpenClaw host</text>
+<rect class="b-ours" x="420" y="20" width="140" height="48" rx="6"/>
+<text class="t" x="490" y="41" text-anchor="middle">worker</text>
+<text class="s" x="490" y="58" text-anchor="middle">wrapper · bridge client</text>
+<rect class="b-oc" x="620" y="20" width="160" height="48" rx="6"/>
+<text class="t" x="700" y="41" text-anchor="middle">OpenClaw Gateway</text>
+<text class="s" x="700" y="58" text-anchor="middle">plugin · gateway call · acp</text>
+<rect class="b-oc" x="830" y="20" width="140" height="48" rx="6"/>
+<text class="t" x="900" y="41" text-anchor="middle">lane agent</text>
+<text class="s" x="900" y="58" text-anchor="middle">lane session</text>
+<line class="life" x1="90" y1="68" x2="90" y2="910"/>
+<line class="life" x1="290" y1="68" x2="290" y2="910"/>
+<line class="life" x1="490" y1="68" x2="490" y2="910"/>
+<line class="life" x1="700" y1="68" x2="700" y2="910"/>
+<line class="life" x1="900" y1="68" x2="900" y2="910"/>
+<text class="hostlbl" x="20" y="96">OPEN</text>
+<line class="e-bus" x1="90" y1="112" x2="288" y2="112" marker-end="url(#ah-bus)"/>
+<text class="m bus" x="189" y="105" text-anchor="middle">spawn openclaw-peer</text>
+<line class="e-bus" x1="290" y1="140" x2="488" y2="140" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="390" y="133" text-anchor="middle">launch worker</text>
+<line class="e-ours" x1="490" y1="168" x2="698" y2="168" marker-end="url(#ah-ours)"/>
+<text class="m ours" x="595" y="161" text-anchor="middle">settings.get · once at start</text>
+<line class="e-ours e-ret" x1="698" y1="192" x2="492" y2="192" marker-end="url(#ah-ours)"/>
+<text class="l ours" x="595" y="186" text-anchor="middle">agents · credentialDir</text>
+<line class="e-bus" x1="290" y1="220" x2="488" y2="220" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="390" y="213" text-anchor="middle">session.open</text>
+<line class="e-oc" x1="490" y1="250" x2="698" y2="250" marker-end="url(#ah-oc)"/>
+<text class="m oc" x="594" y="243" text-anchor="middle">exec.approvals.get</text>
+<line class="e-oc e-ret" x1="698" y1="274" x2="492" y2="274" marker-end="url(#ah-oc)"/>
+<text class="l oc" x="595" y="267" text-anchor="middle">refused: not admin → cached</text>
+<line class="e-oc" x1="490" y1="302" x2="698" y2="302" marker-end="url(#ah-oc)"/>
+<text class="m oc" x="594" y="295" text-anchor="middle">sessions.create · if cwd</text>
+<line class="e-oc" x1="490" y1="328" x2="698" y2="328" marker-end="url(#ah-oc)"/>
+<text class="m oc" x="594" y="321" text-anchor="middle">sessions.patch · if model</text>
+<rect class="b-note" x="380" y="342" width="240" height="64" rx="5"/>
+<text class="l" x="392" y="360">starts openclaw acp child</text>
+<text class="l" x="392" y="378">opens or resumes the ACP session</text>
+<text class="s" x="392" y="396">fresh and resume: one attach</text>
+<line class="e-ours" x1="490" y1="428" x2="698" y2="428" marker-end="url(#ah-ours)"/>
+<text class="m ours" x="594" y="421" text-anchor="middle">lane.register · session key</text>
+<line class="e-bus e-ret" x1="490" y1="454" x2="292" y2="454" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="391" y="447" text-anchor="middle">opened</text>
+<line class="div" x1="20" y1="476" x2="980" y2="476"/>
+<text class="hostlbl" x="20" y="496">RUN</text>
+<line class="e-bus" x1="90" y1="512" x2="288" y2="512" marker-end="url(#ah-bus)"/>
+<text class="m bus" x="189" y="505" text-anchor="middle">turn.run</text>
+<line class="e-bus" x1="290" y1="538" x2="488" y2="538" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="389" y="531" text-anchor="middle">run</text>
+<text class="s" x="498" y="556">slash command refused · directives neutralized</text>
+<line class="e-oc" x1="490" y1="578" x2="898" y2="578" marker-end="url(#ah-oc)"/>
+<text class="l oc" x="694" y="571" text-anchor="middle">ACP prompt via acp</text>
+<line class="e-oc e-ret" x1="898" y1="604" x2="492" y2="604" marker-end="url(#ah-oc)"/>
+<text class="l oc" x="695" y="597" text-anchor="middle">permission request → answered by permission_mode</text>
+<line class="e-oc e-ret" x1="900" y1="630" x2="702" y2="630" marker-end="url(#ah-oc)"/>
+<text class="l oc" x="801" y="623" text-anchor="middle">sessionbus tool call</text>
+<line class="e-ours e-ret" x1="700" y1="656" x2="492" y2="656" marker-end="url(#ah-ours)"/>
+<text class="m ours" x="596" y="649" text-anchor="middle">bus.action</text>
+<line class="e-bus" x1="490" y1="682" x2="292" y2="682" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="391" y="675" text-anchor="middle">performs it on the bus as the lane</text>
+<line class="e-bus e-ret" x1="490" y1="712" x2="292" y2="712" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="391" y="705" text-anchor="middle">result · bounded output</text>
+<line class="div" x1="20" y1="732" x2="980" y2="732"/>
+<text class="hostlbl" x="20" y="752">MESSAGE TO A WORKING LANE</text>
+<line class="e-bus" x1="290" y1="768" x2="488" y2="768" marker-end="url(#ah-bus)"/>
+<text class="l bus" x="389" y="761" text-anchor="middle">deliver (bus message)</text>
+<line class="e-ours" x1="490" y1="794" x2="698" y2="794" marker-end="url(#ah-ours)"/>
+<text class="m ours" x="594" y="787" text-anchor="middle">lane.steer · neutralized text</text>
+<line class="e-ours e-ret" x1="698" y1="818" x2="492" y2="818" marker-end="url(#ah-ours)"/>
+<text class="l ours" x="595" y="811" text-anchor="middle">eligible → receipt written</text>
+<text class="s" x="498" y="838">not accepted: 3 retries, then not_running + log line (safety net)</text>
+<rect class="frame" x="380" y="852" width="600" height="62" rx="4"/>
+<text class="s" x="392" y="870">bridge lost: idle lane closes at once; a running lane closes after its terminal</text>
+<text class="s" x="392" y="886">the worker then stays up 30 s so the result can be read and acknowledged</text>
+<text class="s" x="392" y="902">new Open refused · pending bus actions cancelled</text>
+</svg>

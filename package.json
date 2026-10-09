@@ -1,0 +1,39 @@
+{
+  "name": "openclaw-sessionbus-peer",
+  "version": "0.2.0",
+  "private": true,
+  "license": "MIT",
+  "description": "OpenClaw plugin connecting an agent to Sessionbus as a peer, with a lane worker.",
+  "repository": { "type": "git", "url": "git+https://github.com/imortkz/openclaw-peer.git" },
+  "homepage": "https://github.com/imortkz/openclaw-peer#readme",
+  "bugs": { "url": "https://github.com/imortkz/openclaw-peer/issues" },
+  "keywords": ["openclaw", "sessionbus", "plugin", "agents"],
+  "type": "module",
+  "scripts": {
+    "prepack": "node scripts/build-info.mjs",
+    "postpack": "node scripts/build-info.mjs --clean",
+    "test": "node --test --test-timeout=30000"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "openclaw.plugin.json",
+    "README.md",
+    "docs/GUIDE.md"
+  ],
+  "openclaw": {
+    "extensions": ["./index.js"],
+    "compat": {
+      "pluginApi": ">=2026.8.2"
+    }
+  },
+  "engines": {
+    "node": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"
+  },
+  "dependencies": {
+    "@sessionbus/kit": "0.5.12"
+  },
+  "devDependencies": {
+    "typebox": "1.3.17"
+  }
+}

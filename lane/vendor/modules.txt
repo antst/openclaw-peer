@@ -1,0 +1,11 @@
+# github.com/antst/sessionbus/bus/sdk/go v0.5.12
+## explicit; go 1.24
+github.com/antst/sessionbus/bus/sdk/go
+github.com/antst/sessionbus/bus/sdk/go/internal/rpc
+github.com/antst/sessionbus/bus/sdk/go/internal/stateroot
+github.com/antst/sessionbus/bus/sdk/go/protocol
+# github.com/sessionbus/peer-common v0.0.0-20260922143100-eb655f686e44
+## explicit; go 1.24
+github.com/sessionbus/peer-common/host
+github.com/sessionbus/peer-common/peerversion
+github.com/sessionbus/peer-common/testsocket

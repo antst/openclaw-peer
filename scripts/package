@@ -1,0 +1,35 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+
+output=${1:?usage: scripts/package OUTPUT_DIRECTORY}
+repo=$(CDPATH='' cd "$(dirname "$0")/.." && pwd -P)
+mkdir -p "$output"
+output=$(CDPATH='' cd "$output" && pwd -P)
+version=$(cat "$repo/RELEASE_VERSION")
+printf '%s\n' "$version" | awk '/^[0-9]+\.[0-9]+\.[0-9]+$/ {ok=1} END {exit !ok}' || { echo 'Invalid RELEASE_VERSION' >&2; exit 1; }
+release=${OPENCLAW_PEER_RELEASE:-development}
+case "$release" in development|"v$version") ;; *) echo 'Release must match RELEASE_VERSION' >&2; exit 1;; esac
+revision=${OPENCLAW_PEER_REVISION:-$(git -C "$repo" rev-parse HEAD)}
+printf '%s\n' "$revision" | awk '/^[0-9a-f]{40}$/ {ok=1} END {exit !ok}' 2>/dev/null || {
+  [ "${#revision}" -eq 40 ] && ! printf '%s' "$revision" | LC_ALL=C grep -q '[^0-9a-f]' || { echo 'Invalid revision' >&2; exit 1; }
+}
+goos=${GOOS:-$(go env GOOS)}
+goarch=${GOARCH:-$(go env GOARCH)}
+case "$goos/$goarch" in linux/amd64|linux/arm64|darwin/amd64|darwin/arm64) ;; *) echo 'Unsupported target' >&2; exit 1;; esac
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' 0
+trap 'exit 1' HUP INT TERM
+(cd "$repo/lane" && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -mod=vendor -trimpath -ldflags "-s -w -X github.com/sessionbus/peer-common/peerversion.Release=$release -X github.com/sessionbus/peer-common/peerversion.Revision=$revision" -o "$stage/openclaw-peer" ./cmd/openclaw-peer)
+(cd "$repo" && OPENCLAW_PEER_RELEASE="$release" OPENCLAW_PEER_REVISION="$revision" npm pack --pack-destination "$stage" >/dev/null)
+cp "$repo/scripts/archive-install" "$stage/install"
+cp "$repo/LICENSE" "$repo/README.md" "$repo/scripts/THIRD-PARTY-NOTICES.txt" "$stage/"
+mkdir "$stage/docs"
+cp "$repo/docs/GUIDE.md" "$stage/docs/"
+printf 'openclaw\n' > "$stage/ROLE"
+printf '%s\n' "$revision" > "$stage/SOURCE.txt"
+plugin="openclaw-sessionbus-peer-$version.tgz"
+[ -f "$stage/$plugin" ] || { echo 'Plugin package missing' >&2; exit 1; }
+archive="$output/openclaw-peer-$goos-$goarch.tar.gz"
+tar -czf "$archive" -C "$stage" openclaw-peer "$plugin" install ROLE SOURCE.txt LICENSE README.md docs/GUIDE.md THIRD-PARTY-NOTICES.txt
+printf '%s\n' "$archive"

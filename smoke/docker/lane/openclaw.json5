@@ -1,0 +1,55 @@
+{
+  // run.sh substitutes paths and the private, smoke-only Gateway token.
+  gateway: { mode: "local", bind: "loopback", auth: { mode: "token", token: "{{GATEWAY_TOKEN}}" } },
+  // OpenClaw 9.6+ puts plugin tools behind Tool Search by default; the mock model cannot call Tool Search, so a lane
+  // agent's direct `sessionbus` call fails with "Tool sessionbus not found" (LV-1). Same setting as the peer smoke.
+  tools: { toolSearch: false },
+  models: { mode: "merge", providers: { mock: {
+    baseUrl: "http://mock-model:8000/v1", apiKey: "<mock key>", api: "openai-completions",
+    models: [
+      { id: "mock-a", name: "Mock A", reasoning: true, compat: { supportsReasoningEffort: true }, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 120000, maxTokens: 8192 },
+      { id: "mock-b", name: "Mock B", reasoning: false, compat: { supportsReasoningEffort: true }, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 120000, maxTokens: 8192 },
+    ],
+  } } },
+  agents: {
+    // 8.2+ needs ownership:"explicit" or one legacy default marker for three agents.
+    // Explicit breaks lane CLI pairing on 8.2 and workspace plugin discovery on 9.6;
+    // keep the marker (9.5+ only logs a retired-marker warning) and ownership unset.
+    defaults: { model: { primary: "mock/mock-a" } },
+    entries: {
+      lane: { default: true, workspace: "__LANE_ROOT__", tools: { alsoAllow: ["sessionbus"], fs: { workspaceOnly: true }, exec: { ask: "always" } } },
+      // X1: a lane agent on the real codex harness against the codex-fixture (see smoke/docker/codex-lib.sh).
+      codexlane: {
+        workspace: "__LANE_ROOT__",
+        model: { primary: "openai/gpt-5.5" },
+        models: { "openai/gpt-5.5": { agentRuntime: { id: "codex" } } },
+        tools: { alsoAllow: ["sessionbus"], fs: { workspaceOnly: true } },
+      },
+      b: { workspace: "__B_ROOT__", tools: { alsoAllow: ["sessionbus"], fs: { workspaceOnly: true } } },
+      decoy: { workspace: "__DECOY_REAL_ROOT__", modelPolicy: { allow: ["mock/mock-a"] }, tools: { alsoAllow: ["sessionbus"], fs: { workspaceOnly: true } } },
+    },
+  },
+  plugins: { slots: { memory: "none" }, entries: {
+    // The REAL codex app-server, pointed at the fixture (X1-2/X1-3, see codex-lib.sh): the model is a catalog model of
+      // provider `openai` run by the codex harness; the built-in OpenAI provider's base URL is `openai_base_url`, given
+      // as a `-c` override (OpenClaw keeps `-c` before `app-server`). The Gateway has no route out and a dummy key.
+      codex: {
+        enabled: true,
+        config: { appServer: { args: ["-c", 'openai_base_url="http://codex-fixture:8001/v1"', "app-server", "--listen", "stdio://"] } },
+      },
+    sessionbus: {
+    enabled: true,
+    config: {
+      lanes: {
+        agents: {
+          lane: { description: "Primary lane agent" },
+          b: { description: "Second lane agent" },
+          codexlane: { description: "Codex-harness lane agent" },
+          decoy: { description: "Containment probe" },
+        },
+        credentialDir: "/lane-cli",
+        auditLog: "__AUDIT_LOG__",
+      },
+    },
+  } } },
+}

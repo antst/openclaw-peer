@@ -1,0 +1,79 @@
+{
+  // OpenClaw 8.2 docs/install/docker.md:151,699 pins mode/bind for Docker.
+  // All smoke probes run inside this container, so its gateway stays on loopback.
+  gateway: { mode: "local", bind: "loopback" },
+  // The mock cannot call Tool Search; expose sessionbus directly on 9.6+.
+  tools: { toolSearch: false },
+  models: {
+    mode: "merge",
+    providers: {
+      mock: {
+        baseUrl: "http://mock-model:8000/v1",
+        apiKey: "<mock key>",
+        api: "openai-completions",
+        models: [{
+          id: "mock-model",
+          name: "Mock",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 120000,
+          maxTokens: 8192,
+        }],
+      },
+    },
+  },
+  agents: {
+    // Two bus agents (smoke, codexsmoke). The default mode is explicit ownership, which leaves the channel unbound.
+    // SMOKE_PEER_OWNERSHIP=marker swaps it for the legacy `default: true` marker, which OpenClaw materializes into a
+    // {agentId: <default>, match: {channel: "sessionbus", accountId: "*"}} binding (src/config/legacy.default-agent-roles.ts:91-101
+    // on 8.2); the plugin's synthetic peer-wildcard binding outranks it (P-ROUTE-1), so both modes behave the same.
+    ownership: "explicit",
+    // Under explicit ownership a multi-agent roster must name the agents that own the ambient surfaces (otherwise 9.x prints
+    // "Multi-agent config has no ambient heartbeat owner" and "Workspace plugin discovery was skipped because multiple
+    // explicit agents are configured without agents.defaults.systemAgent.agentId"; src/config/validation-core.ts:61 on 8.2,
+    // :65 on 9.8, src/plugins/control-plane-workspace.ts:47 on 9.8). Both keys exist on 8.2 and 9.8
+    // (src/config/zod-schema.agent-defaults.ts, schema.help.core.ts). They are service targets, not channel bindings:
+    // the legacy-marker migration that appends {agentId, match:{channel, accountId:"*"}} bindings
+    // (src/config/legacy.default-agent-roles.ts:91-101) runs only for the `default: true` marker, never for these keys.
+    defaults: {
+      model: { primary: "mock/mock-model" },
+      systemAgent: { agentId: "smoke" },
+      heartbeat: { agentId: "smoke" },
+    },
+    entries: {
+      smoke: { tools: { alsoAllow: ["sessionbus"] } },
+      // X1: an agent on the real codex harness (runtime codex) whose model API is the codex-fixture. `openai/gpt-5.5` is
+      // in the model catalog (an invented model id is "Unknown model" on 8.2); no provider block with a baseUrl (the
+      // harness refuses providers with their own route).
+      codexsmoke: {
+        model: { primary: "openai/gpt-5.5" },
+        models: { "openai/gpt-5.5": { agentRuntime: { id: "codex" } } },
+        tools: { alsoAllow: ["sessionbus"] },
+      },
+    },
+  },
+  // channels.sessionbus.enabled is NOT set here: the validator does not know the channel id until the plugin is
+  // installed (spike 003 check 1). run.sh sets it with `config set` right after `plugins install`.
+  plugins: {
+    // The smoke has no embedding provider; without this the memory plugin logs `[memory] sync failed ... No API key`.
+    slots: { memory: "none" },
+    entries: {
+      // The codex plugin ships disabled in the image (master docker check 2026-10-05).
+      // The REAL codex app-server, pointed at the fixture (X1-2/X1-3, see codex-lib.sh): the model is a catalog model of
+      // provider `openai` run by the codex harness; the built-in OpenAI provider's base URL is `openai_base_url`, given
+      // as a `-c` override (OpenClaw keeps `-c` before `app-server`). The Gateway has no route out and a dummy key.
+      codex: {
+        enabled: true,
+        config: { appServer: { args: ["-c", 'openai_base_url="http://codex-fixture:8001/v1"', "app-server", "--listen", "stdio://"] } },
+      },
+      sessionbus: {
+        enabled: true,
+        config: {
+          socket: "/tmp/sb/presence.sock",
+          agents: { smoke: { enabled: true, groups: ["oc-smoke"] }, codexsmoke: { enabled: true, groups: ["oc-smoke"] } },
+        },
+      },
+    },
+  },
+}

@@ -1,0 +1,64 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: lane/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - name: Verify release tag
+        run: |
+          test "$GITHUB_REF_NAME" = "v$(cat RELEASE_VERSION)"
+      - name: Vet worker
+        run: cd lane && go vet -mod=vendor ./...
+      - name: Build archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          OPENCLAW_PEER_RELEASE: ${{ github.ref_name }}
+          OPENCLAW_PEER_REVISION: ${{ github.sha }}
+        run: scripts/package dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          merge-multiple: true
+      - name: Checksums
+        run: sha256sum ./*.tar.gz | sed 's|  ./|  |' > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" ./*.tar.gz SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
