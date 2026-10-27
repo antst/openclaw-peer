@@ -256,8 +256,10 @@ A disabled plugin registers no reload rules, so enabling it (`plugins.entries.se
 false → true) is still an in-place reload: run `openclaw gateway restart` right after. That
 explicit restart is not deferred.
 
-A restart closes the lanes that are open: a worker that loses the plugin's bridge closes its lane (after a
-running turn finishes) and exits after a 30 second grace for result collection. Resume them afterwards. A change
+A restart closes the native sessions of open lanes: a worker that loses the plugin's bridge closes its native session (after a
+running turn finishes). The worker retains results until the daemon's ordinary lane retirement policy or an
+explicit close; bridge loss adds no deadline. Close the old lane before resuming afterwards (see
+[lane lifetime](../lane/README.md#losing-the-bridge)). A change
 under `channels.sessionbus` is applied by OpenClaw as a restart of that channel only.
 
 On OpenClaw 8.2, after an in-place `plugins.*` reload, we observed a claude-cli agent's

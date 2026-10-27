@@ -51,38 +51,21 @@ func New(cfg Config, bridge *Bridge) *Wrapper {
 	return w
 }
 
-// onBridgeLost is the D5 fail-closed path: without the bridge the plugin can neither steer into
-// this lane nor serve its voice, so an idle lane closes and the worker exits at once; a live Run
-// finishes first (endRun closes after the daemon has seen its outcome).
+// onBridgeLost refuses new native work and closes the ACP child. A live Run finishes
+// first so the SDK can publish its result. Keep the worker's SDK connection alive:
+// result retention and worker retirement belong to the daemon's lane policy, not
+// to a separate bridge-loss deadline.
 func (w *Wrapper) onBridgeLost() {
 	w.mu.Lock()
 	w.bridgeLost = true
 	busy := w.liveRun != nil
 	w.mu.Unlock()
 	if busy {
-		fmt.Fprintln(os.Stderr, "bridge lost: closing lane after current run")
+		fmt.Fprintln(os.Stderr, "bridge lost: closing native session after current run")
 		return
 	}
-	// "Idle" also covers the window after a Run returned but before the host has read and
-	// acknowledged its result (endRun clears liveRun first): same grace as the mid-run path.
-	fmt.Fprintln(os.Stderr, "bridge lost: closing idle lane")
-	w.closeAndShutdownAfter(bridgeLossGrace)
-}
-
-// bridgeLossGrace is how long a worker that lost its bridge stays up after closing its lane, for
-// the host to read and acknowledge a finished run's result (measured from the run's terminal
-// when one was live). The SDK exposes no acknowledgement hook, so this is a bound, not a signal;
-// the host's own session.close ends the worker sooner. A var so tests can shorten it.
-var bridgeLossGrace = 30 * time.Second
-
-func (w *Wrapper) closeAndShutdownAfter(grace time.Duration) {
+	fmt.Fprintln(os.Stderr, "bridge lost: closing native session; retaining results until lane retirement")
 	_ = w.Close(context.Background(), kit.SessionCloseRequest{})
-	if grace > 0 {
-		time.Sleep(grace)
-	}
-	if w.shutdown != nil {
-		w.shutdown()
-	}
 }
 
 func (w *Wrapper) beginRun(run *kit.Run) error {
@@ -103,10 +86,9 @@ func (w *Wrapper) endRun(run *kit.Run) {
 	if lost {
 		go func() {
 			<-run.Done()
-			// Done means the daemon has the run's ready frame; the result itself is still read
-			// from this worker (turn.status, then turn.ack). Free the lane now, but keep the
-			// worker up for a grace period so the terminal stays collectable (M-L2b-1).
-			w.closeAndShutdownAfter(bridgeLossGrace)
+			// Done means the daemon has the run's ready frame. Close native resources,
+			// but let the SDK retain status/wait/ack until ordinary lane retirement.
+			_ = w.Close(context.Background(), kit.SessionCloseRequest{})
 		}()
 	}
 }
@@ -333,6 +315,12 @@ func (w *Wrapper) attach(ctx context.Context, lock *host.SessionLock, agentID, k
 		return cleanup(fmt.Errorf("lane register: %w", err))
 	}
 	w.mu.Lock()
+	// Loss may have been reported after Register succeeded but before publication.
+	// Its idle cleanup could not see this child; never publish it after that cleanup.
+	if w.bridgeLost {
+		w.mu.Unlock()
+		return cleanup(errors.New("lane bridge lost"))
+	}
 	w.key, w.acpSessionID, w.process, w.lock, w.permissionMode, w.reasoningEffort = key, acpSessionID, process, lock, open.PermissionMode, open.ReasoningEffort
 	w.mu.Unlock()
 	return kit.OpenResult{SessionID: key}, nil

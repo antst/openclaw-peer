@@ -1386,9 +1386,8 @@ func TestDeliverAfterBridgeLossIsNotSubmitted(t *testing.T) {
 	})
 	_ = h.Interrupt()
 	h.Wait(run)
-	// the loss armed the post-loss shutdown (closes the lane, then the grace): join it so nothing
-	// still writes into the test directory when t.TempDir is removed
-	h.waitGone()
+	// Explicit close owns worker retirement and joins native cleanup.
+	h.Close()
 }
 
 func TestDeliverOpenIdleIsNotRunning(t *testing.T) {
@@ -1903,21 +1902,22 @@ func TestCwdNulRejected(t *testing.T) {
 	e.noNativeWork(t)
 }
 
-// D5: without the bridge the lane fails closed. Idle: the worker exits at once.
-func TestBridgeLossIdleShutsDown(t *testing.T) {
+// Bridge loss refuses native work; explicit close retires the idle SDK worker.
+func TestBridgeLossIdleClosesNative(t *testing.T) {
 	e := newEnv(t)
 	h := e.start()
 	h.mustOpen(kit.OpenOptions{})
 	prompts := len(e.events("prompt"))
 	e.bridge.Drop()
-	h.waitGone()
+	eventually(t, "native session closure", func() bool { return len(e.events("session_close")) == 1 })
+	h.Close()
 	if n := len(e.events("prompt")); n != prompts {
 		t.Fatalf("prompts grew %d -> %d after bridge loss", prompts, n)
 	}
 }
 
-// Mid-run the lane finishes the run first; the worker exits only after its terminal.
-func TestBridgeLossMidRunShutsDownAfterTerminal(t *testing.T) {
+// Mid-run native cleanup waits for the terminal; explicit close retires the worker.
+func TestBridgeLossMidRunClosesNativeAfterTerminal(t *testing.T) {
 	e := newEnv(t)
 	h := e.start()
 	h.mustOpen(kit.OpenOptions{})
@@ -1933,7 +1933,8 @@ func TestBridgeLossMidRunShutsDownAfterTerminal(t *testing.T) {
 		t.Fatalf("interrupt: %v", rerr)
 	}
 	h.Wait(run)
-	h.waitGone()
+	eventually(t, "native session closure", func() bool { return len(e.events("session_close")) == 1 })
+	h.Close()
 	if n := len(e.events("prompt")); n != 1 {
 		t.Fatalf("prompts after bridge loss: %d, want 1", n)
 	}

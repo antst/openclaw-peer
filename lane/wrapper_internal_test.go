@@ -6,6 +6,7 @@ package lane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/antst/sessionbus/bus/sdk/go/protocol"
 	"github.com/imortkz/openclaw-peer/lane/internal/acp"
 	"github.com/imortkz/openclaw-peer/lane/internal/fakebridge"
+	"github.com/sessionbus/peer-common/host"
 )
 
 func TestCloseReportsACPCleanupFailureWithoutSocket(t *testing.T) {
@@ -387,24 +389,22 @@ func TestCloseJoinerIsBoundedWhenCloserBlocks(t *testing.T) {
 	}
 }
 
-// CR-R2b-01: a bridge lost while nothing is live — which includes the window after a Run
-// returned and before the host acknowledged its result — closes the lane at once but keeps the
-// worker up for the grace period, so that result stays collectable.
-func TestBridgeLossIdleKeepsWorkerForGrace(t *testing.T) {
-	old := bridgeLossGrace
-	bridgeLossGrace = 400 * time.Millisecond
-	t.Cleanup(func() { bridgeLossGrace = old })
-	gone := make(chan time.Time, 1)
-	w := &Wrapper{shutdown: func() { gone <- time.Now() }}
-	start := time.Now()
-	go w.onBridgeLost()
+// Bridge loss returns after native cleanup without scheduling SDK shutdown. The
+// daemon may retain results indefinitely (auto_close_ms=0), or until explicit close.
+func TestBridgeLossIdleDoesNotShutDownWorker(t *testing.T) {
+	gone := make(chan struct{}, 1)
+	w := &Wrapper{shutdown: func() { gone <- struct{}{} }}
+	returned := make(chan struct{})
+	go func() { w.onBridgeLost(); close(returned) }()
 	select {
-	case at := <-gone:
-		if d := at.Sub(start); d < 300*time.Millisecond {
-			t.Fatalf("worker shut down %s after the loss, want after the grace", d)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("worker never shut down")
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("bridge loss did not return after native cleanup")
+	}
+	select {
+	case <-gone:
+		t.Fatal("bridge loss shut down the result-serving worker")
+	default:
 	}
 }
 
@@ -442,5 +442,50 @@ func TestDeliverNotWrittenIsNotSubmitted(t *testing.T) {
 	r, err := w.Deliver(context.Background(), req, nil)
 	if err != nil || r.Disposition != "rejected" || r.Reason != "not_submitted" {
 		t.Fatalf("receipt %+v err %v, want rejected/not_submitted", r, err)
+	}
+}
+
+// Register can succeed while the loss callback has already cleaned up the still
+// unpublished lane. Serialize that ordering without relying on socket timing.
+func TestAttachDoesNotPublishNativeAfterBridgeLoss(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("FAKEACP_STATE", filepath.Join(root, "state"))
+	t.Setenv("FAKEACP_LOG", filepath.Join(root, "fake.log"))
+	t.Setenv("FAKEACP_SCRIPT", "")
+	w := &Wrapper{cfg: Config{CredentialDir: filepath.Join(root, "cli")}}
+	b, _ := dialFake(t, fakebridge.Options{OnRegister: func(_, _, _ string) string {
+		w.onBridgeLost()
+		return "" // the registration reply still succeeds
+	}})
+	w.bridge = b
+	lock, err := host.AcquireSessionLock(filepath.Join(root, "bus.sock"), "openclaw-peer", "test-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	var child *acp.Process
+	_, err = w.attach(context.Background(), lock, "lane", "test-session", kit.OpenOptions{}, func(p *acp.Process) (string, error) {
+		child = p
+		return "native-session", nil
+	})
+	if child != nil {
+		t.Cleanup(func() { _ = child.Close(context.Background()) })
+	}
+	if err == nil || err.Error() != "lane bridge lost" {
+		t.Fatalf("attach = %v, want bridge-loss refusal", err)
+	}
+	if w.process != nil || w.lock != nil || w.key != "" {
+		t.Fatal("published native resources after loss")
+	}
+	if _, err := lock.File().Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("unpublished native lock was not released: %v", err)
+	}
+	if child == nil {
+		t.Fatal("test did not start native child")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := child.Call(ctx, "initialize", map[string]any{}, nil); err == nil {
+		t.Fatal("unpublished native child still accepts calls")
 	}
 }
