@@ -420,7 +420,7 @@ rule for a busy session.
 
 ## Restart behaviour
 
-A Gateway restart or a plugin generation swap restarts the bridge: connected workers lose it and close their lanes
+A Gateway restart or a plugin generation swap restarts the bridge: connected workers lose it and close their native sessions
 (see "Applying config changes"). A daemon connection loss re-hellos the peer with the same identity once the socket reconnects.
 Stopping and starting the plugin (a Gateway restart, or OpenClaw's in-place reload after another
 plugin's config change) reconnects every enabled agent;
