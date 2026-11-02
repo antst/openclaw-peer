@@ -141,7 +141,7 @@ nonzero `auto_close_ms`. The same applies when `auto_close_ms` is zero or no nat
 deadline (a nonpersistent lane also closes when its owner leaves). Close the old lane before resuming after
 the bridge is restored; this does not automatically reattach its native session. Pending bridge actions are
 cancelled. A change under `plugins.entries.sessionbus` restarts the Gateway and closes native lane sessions
-this way. An actual ACP child exit remains a separate fault that retires the worker after its Run outcome.
+this way. An actual ACP child exit follows the same retention policy: native resources close after the Run outcome, while the SDK worker stays connected. Subsequent Runs return `unavailable` with `lane native session exited`; `lane bridge lost` takes priority when both faults occurred. An idle child exit is detected by the next Run, which ends unavailable. Explicitly close the old lane before resuming; child exit adds no retirement deadline and does not discard older unacknowledged results.
 
 ## Where settings come from
 

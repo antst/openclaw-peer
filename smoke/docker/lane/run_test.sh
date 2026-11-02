@@ -937,6 +937,13 @@ test_bridge_loss_clause() {
       jq -nc --arg input "$(cat "$test_dir/input")" '{lastUser:$input}'
     fi
   }
+  retained_terminal() {
+    if [[ "$mode" == native-exit ]]; then
+      echo '{"run_id":"r1","state":"unavailable","reason":"acp child exited code=1"}'
+    else
+      echo '{"run_id":"r1","state":"done","result":{"outcome":"completed","result":"ECHO retained"}}'
+    fi
+  }
   sb() {
     echo "$1 $2" >>"$calls"
     case "$1" in
@@ -949,7 +956,7 @@ test_bridge_loss_clause() {
             echo '{"run_id":"r2","state":"done","result":{"outcome":"completed","result":"still connected"}}'; return
           fi
           jq -r '.input' <<<"$2" >"$test_dir/input"
-          jq -nc --arg reason "$([[ "$mode" == wrong-reason ]] && echo other || echo 'lane bridge lost')" '{run_id:"r2",state:"unavailable",reason:$reason}'
+          jq -nc --arg reason "$(case "$mode" in wrong-reason) echo other;; native-exit) echo 'lane native session exited';; *) echo 'lane bridge lost';; esac)" '{run_id:"r2",state:"unavailable",reason:$reason}'
         else
           echo '{"run_id":"r1","state":"done","result":{"outcome":"completed","result":"ECHO retained"}}'
         fi ;;
@@ -961,14 +968,15 @@ test_bridge_loss_clause() {
         if [[ "$mode" == lost ]] || [[ -f "$test_dir/closed" ]]; then
           echo '{"error":{"code":"unknown_session"}}'; return 1
         fi
+        if [[ "$mode" == native-exit ]]; then retained_terminal; return; fi
         jq -nc --arg text "$([[ "$mode" == changed ]] && echo changed || echo 'ECHO retained')" '{run_id:"r1",state:"done",result:{outcome:"completed",result:$text}}' ;;
-      turn.wait) echo '{"run_id":"r1","state":"done","result":{"outcome":"completed","result":"ECHO retained"}}' ;;
+      turn.wait) retained_terminal ;;
       session.close) touch "$test_dir/closed"; echo '{}' ;;
       turn.ack) echo '{}' ;;
       *) echo "unexpected $1" >&2; return 1 ;;
     esac
   }
-  if [[ "$mode" != good ]]; then
+  if [[ "$mode" != good && "$mode" != native-exit ]]; then
     if output=$(check_clause "$target" 2>&1); then
       echo "$target accepted $mode" >&2; return 1
     fi
@@ -995,7 +1003,11 @@ test_bridge_loss_clause() {
   grep -q 'turn.ack .*"run_id":"r1"' "$calls" || return 1
   grep -q 'turn.ack .*"run_id":"r2"' "$calls" || return 1
   if [[ "$target" == bridge-loss-mid-run ]]; then
-    [[ "$output" == *'state=done outcome=completed'* ]] || return 1
+    if [[ "$mode" == native-exit ]]; then
+      [[ "$output" == *'state=unavailable'* && "$output" == *'lane native session exited'* ]] || return 1
+    else
+      [[ "$output" == *'state=done outcome=completed'* ]] || return 1
+    fi
   fi
 }
 
@@ -1009,6 +1021,7 @@ if [[ $# == 0 ]]; then
 fi
 
 case "${1:-}" in
+  bridge-loss-native-exit) test_bridge_loss_clause bridge-loss-mid-run native-exit ;;
   lane-ownership-defaults) test_lane_ownership_defaults ;;
   lane-ownership-render) test_lane_ownership_render ;;
   bridge-loss-retain)

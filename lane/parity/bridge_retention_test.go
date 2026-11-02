@@ -68,3 +68,47 @@ func TestParityBridgeLossPreservesRetirementPolicy(t *testing.T) {
 		})
 	}
 }
+
+// A real ACP crash must preserve SDK records just like loss of the bridge.
+func TestParityChildCrashRetainsResults(t *testing.T) {
+	b := newBus(t)
+	var lane spawnResult
+	b.mustCall("lane.spawn", map[string]any{
+		"product": "openclaw-peer", "name": "child-retention", "persistent": true,
+		"auto_close_ms": 0, "notify": false, "extra_groups": []string{"lanetest"},
+		"open": map[string]any{"arguments": []string{"--agent", "a"}},
+	}, &lane)
+	older := b.runText(lane.SessionID, "older unacknowledged result")
+	completed(t, older)
+	crashed := b.runText(lane.SessionID, "please CRASH")
+	if crashed.State != "unavailable" || crashed.Reason == "" {
+		t.Fatalf("crashed run: %+v", crashed)
+	}
+	time.Sleep(1500 * time.Millisecond) // past the old test retention window
+	for _, method := range []string{"turn.status", "turn.wait"} {
+		var retained runStatus
+		b.mustCall(method, map[string]any{"session_id": lane.SessionID, "run_id": crashed.RunID}, &retained)
+		if retained.State != crashed.State || retained.Reason != crashed.Reason || retained.RunID != crashed.RunID {
+			t.Fatalf("%s changed crashed record: %+v", method, retained)
+		}
+	}
+	refused := b.runText(lane.SessionID, "must not reach child")
+	if refused.State != "unavailable" || refused.Reason != "lane native session exited" {
+		t.Fatalf("post-exit Run: %+v", refused)
+	}
+	var retained runStatus
+	b.mustCall("turn.status", map[string]any{"session_id": lane.SessionID, "run_id": older.RunID}, &retained)
+	if completed(t, retained) != older.Result.Result {
+		t.Fatal("older record changed after child crash")
+	}
+	if got := len(b.events("prompt")); got != 2 {
+		t.Fatalf("native prompts = %d, want original and crash only", got)
+	}
+	for _, ref := range []string{older.RunID, crashed.RunID, refused.RunID} {
+		b.mustCall("turn.ack", map[string]any{"session_id": lane.SessionID, "run_id": ref}, nil)
+	}
+	b.mustCall("session.close", map[string]any{"session_id": lane.SessionID}, nil)
+	if _, err := b.call("turn.status", map[string]any{"session_id": lane.SessionID, "run_id": crashed.RunID}); err == nil || err.Code != -32001 {
+		t.Fatalf("status after close: %v", err)
+	}
+}

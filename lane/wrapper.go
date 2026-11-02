@@ -38,6 +38,7 @@ type Wrapper struct {
 	liveRun           *kit.Run      // the Run being served (any kind), nil when idle
 	closing           chan struct{} // non-nil while a Close is in flight; closed when it is done
 	bridgeLost        bool
+	nativeLost        bool
 	adminGuardDone    bool
 	adminGuardErr     error
 }
@@ -74,14 +75,17 @@ func (w *Wrapper) beginRun(run *kit.Run) error {
 	if w.bridgeLost {
 		return errors.New("lane bridge lost")
 	}
+	if w.nativeLost {
+		return errors.New("lane native session exited")
+	}
 	w.liveRun = run
 	return nil
 }
 
-func (w *Wrapper) endRun(run *kit.Run) {
+func (w *Wrapper) endRun(run interface{ Done() <-chan struct{} }) {
 	w.mu.Lock()
 	w.liveRun = nil
-	lost := w.bridgeLost
+	lost := w.bridgeLost || w.nativeLost
 	w.mu.Unlock()
 	if lost {
 		go func() {
@@ -791,7 +795,7 @@ func (w *Wrapper) Run(ctx context.Context, run *kit.Run, input kit.RunInput) (ki
 	}
 	text := neutralizeDirectives(*input.Text)
 	result, err := w.handoff.Run(ctx, run, text, w.startTurn)
-	w.shutdownAfter(run, err)
+	w.markNativeExit(err)
 	return result, err
 }
 
@@ -833,7 +837,7 @@ func (w *Wrapper) runDelivery(ctx context.Context, run *kit.Run, request kit.Del
 	result, err := w.handoff.Run(ctx, run, text, start)
 	close(finished)
 	<-reported
-	w.shutdownAfter(run, err)
+	w.markNativeExit(err)
 	return result, err
 }
 
@@ -868,20 +872,14 @@ func reportDelivery(run *kit.Run, t *acpTurn, finished, reported chan struct{}) 
 	}
 }
 
-// shutdownAfter implements "child exit mid-run -> shutdown() after <-r.Done()": once the ACP
-// child itself has exited — any exit, matched via errors.Is rather than the error's text, so a
-// clean exit 0 mid-turn shuts down too — the lane can't serve another turn, so the
-// worker exits after the daemon has observed this run's outcome.
-func (w *Wrapper) shutdownAfter(run *kit.Run, err error) {
-	if !errors.Is(err, acp.ErrChildExited) {
-		return
+// A child exit makes native work permanently unavailable. endRun closes native
+// resources after run.Done, leaving SDK records available until lane retirement.
+func (w *Wrapper) markNativeExit(err error) {
+	if errors.Is(err, acp.ErrChildExited) {
+		w.mu.Lock()
+		w.nativeLost = true
+		w.mu.Unlock()
 	}
-	go func() {
-		<-run.Done()
-		if w.shutdown != nil {
-			w.shutdown()
-		}
-	}()
 }
 
 func (w *Wrapper) Interrupt(ctx context.Context, run *kit.Run) error {

@@ -489,3 +489,76 @@ func TestAttachDoesNotPublishNativeAfterBridgeLoss(t *testing.T) {
 		t.Fatal("unpublished native child still accepts calls")
 	}
 }
+
+func TestNativeExitRefusesNewRunWithBridgeLossPriority(t *testing.T) {
+	w := &Wrapper{}
+	w.markNativeExit(errors.New("ordinary turn error"))
+	if err := w.beginRun(nil); err != nil {
+		t.Fatalf("ordinary turn error disabled native work: %v", err)
+	}
+	w.markNativeExit(fmt.Errorf("wrapped: %w", acp.ErrChildExited))
+	if err := w.beginRun(nil); err == nil || err.Error() != "lane native session exited" {
+		t.Fatalf("post-exit Run: %v", err)
+	}
+	w.bridgeLost = true
+	if err := w.beginRun(nil); err == nil || err.Error() != "lane bridge lost" {
+		t.Fatalf("combined loss should prefer bridge reason: %v", err)
+	}
+}
+
+// Done is supplied independently of the SDK transport so this cleanup boundary
+// can be tested without a Unix socket or access to the SDK's private Run fields.
+type nativeCleanupRun struct{ done <-chan struct{} }
+
+func (r nativeCleanupRun) Done() <-chan struct{} { return r.done }
+
+func TestEndRunClosesNativeResourcesAfterChildExit(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "unused.sock") // lock namespace only; no socket bind
+	lock, err := host.AcquireSessionLock(socket, "openclaw-peer", "native-cleanup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	process, err := acp.Start(context.Background(), []string{"/bin/sh", "-c", `read line; printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'`}, os.Environ())
+	if err != nil {
+		_ = lock.Close()
+		t.Fatal(err)
+	}
+	w := &Wrapper{nativeLost: true, process: process, lock: lock, acpSessionID: "session", key: "native-cleanup"}
+	t.Cleanup(func() { _ = w.Close(context.Background(), kit.SessionCloseRequest{}) })
+	done := make(chan struct{})
+	w.endRun(nativeCleanupRun{done: done})
+	// Cleanup must wait for publication of the terminal, not merely Run's return.
+	time.Sleep(30 * time.Millisecond)
+	w.mu.Lock()
+	intact := w.process == process && w.lock == lock
+	w.mu.Unlock()
+	if !intact {
+		t.Fatal("native resources cleared before Run.Done")
+	}
+	if probe, err := host.AcquireSessionLock(socket, "openclaw-peer", "native-cleanup"); err == nil {
+		_ = probe.Close()
+		t.Fatal("native lock released before Run.Done")
+	}
+	close(done)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		w.mu.Lock()
+		cleaned := w.process == nil && w.lock == nil && w.closing == nil
+		w.mu.Unlock()
+		if cleaned {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("native process/lock were not cleared after Run.Done with nativeLost")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	probe, err := host.AcquireSessionLock(socket, "openclaw-peer", "native-cleanup")
+	if err != nil {
+		t.Fatalf("native lock still held after cleanup: %v", err)
+	}
+	_ = probe.Close()
+	if err := process.Close(context.Background()); err != nil {
+		t.Fatalf("native process cleanup failed: %v", err)
+	}
+}

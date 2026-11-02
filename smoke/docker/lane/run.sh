@@ -644,21 +644,21 @@ check_clause() {
         [[ "$(jq -r '.state' <<<"$terminal")" == running ]] || break
         (( SECONDS < slow_deadline )) || fail "$clause" "run never reached terminal: $terminal"
       done
-      jq -e '.state=="done" and (.result.outcome=="completed" or .result.outcome=="failed" or .result.outcome=="interrupted")' <<<"$terminal" >/dev/null || fail "$clause" "no collectable native terminal: $terminal"
+      jq -e '(.state=="unavailable" and (.reason | type=="string" and length>0)) or (.state=="done" and (.result.outcome=="completed" or .result.outcome=="failed" or .result.outcome=="interrupted"))' <<<"$terminal" >/dev/null || fail "$clause" "no collectable native terminal: $terminal"
       sleep 35
       out=$(rpc turn.status "$(json --arg id "$id" --arg ref "$ref" '{session_id:$id,run_id:$ref}')")
-      jq -e --argjson original "$terminal" '.state==$original.state and .run_id==$original.run_id and .result==$original.result' <<<"$out" >/dev/null || fail "$clause" "terminal not retained after 35 s: $out"
+      jq -e --argjson original "$terminal" '.state==$original.state and .run_id==$original.run_id and .result==$original.result and .reason==$original.reason' <<<"$out" >/dev/null || fail "$clause" "terminal not retained after 35 s: $out"
       local loss_mark refused_ref loss_marker="BRIDGE_LOSS_REFUSED_${RANDOM}_$$"
       loss_mark=$(mock_log_mark)
       second=$(run "$id" "$loss_marker")
-      jq -e '.state=="unavailable" and .reason=="lane bridge lost"' <<<"$second" >/dev/null || fail "$clause" "bridge was not lost: new Run was not refused: $second"
+      jq -e '.state=="unavailable" and (.reason=="lane bridge lost" or .reason=="lane native session exited")' <<<"$second" >/dev/null || fail "$clause" "bridge was not lost: new Run was not refused: $second"
       refused_ref=$(jq -er '.run_id' <<<"$second")
       mock_log_since "$loss_mark" | jq -se --arg marker "$loss_marker" 'all(.[]; (tostring | contains($marker)) | not)' >/dev/null || fail "$clause" "refused input reached mock"
       for ref in "$ref" "$refused_ref"; do
         rpc turn.ack "$(json --arg id "$id" --arg ref "$ref" '{session_id:$id,run_id:$ref}')" >/dev/null
       done
       close_lane "$id"
-      pass "$clause" "collectable after 35 s: state=$(jq -r '.state' <<<"$out") outcome=$(jq -r '.result.outcome' <<<"$out") run=$(jq -r '.run_id' <<<"$out"); new input refused without model request"
+      pass "$clause" "collectable after 35 s: state=$(jq -r '.state' <<<"$out") outcome=$(jq -r '.result.outcome // .reason' <<<"$out") run=$(jq -r '.run_id' <<<"$out"); new input refused without model request: $(jq -r '.reason' <<<"$second")"
       ;;
     admin-guard)
       # Live proof of the runtime admin guard. A worker whose Gateway
