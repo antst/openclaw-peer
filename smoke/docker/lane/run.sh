@@ -178,8 +178,48 @@ wait_bridge() {
   pass bridge "settings.get over the tunnel: agents lane, b, decoy, codexlane; credentialDir /lane-cli"
 }
 
+lane_ownership_mode() {
+  local mode="${LANE_SMOKE_OWNERSHIP:-}" tag="${OPENCLAW_IMAGE##*:}"
+  if [[ -z "$mode" ]]; then
+    mode=explicit
+    if [[ "$tag" =~ ^v?([0-9]{4})\.([0-9]+)(\.|$|-) ]]; then
+      if (( 10#${BASH_REMATCH[1]} < 2026 || (10#${BASH_REMATCH[1]} == 2026 && 10#${BASH_REMATCH[2]} < 10) )); then
+        mode=marker
+      fi
+    fi
+  fi
+  case "$mode" in
+    marker|explicit) printf '%s\n' "$mode" ;;
+    *) fail setup "LANE_SMOKE_OWNERSHIP must be marker or explicit" ;;
+  esac
+}
+
+render_lane_config() {
+  node - "$@" <<'NODE'
+const fs = require('node:fs');
+const vm = require('node:vm');
+const [source, dest, lane, b, decoy, token, audit, ownership] = process.argv.slice(2);
+let config = fs.readFileSync(source, 'utf8');
+for (const [key, value] of Object.entries({__LANE_ROOT__:lane,__B_ROOT__:b,__DECOY_REAL_ROOT__:decoy,'{{GATEWAY_TOKEN}}':token,__AUDIT_LOG__:audit})) {
+  config = config.replaceAll(key, value);
+}
+const rendered = vm.runInNewContext('(' + config + ')');
+if (ownership === 'explicit') {
+  for (const entry of Object.values(rendered.agents.entries)) delete entry.default;
+  rendered.agents.ownership = 'explicit';
+  for (const key of ['heartbeat', 'systemAgent', 'authInheritance']) {
+    rendered.agents.defaults[key] = {agentId:'lane'};
+  }
+}
+config = JSON.stringify(rendered, null, 2) + '\n';
+fs.writeFileSync(dest, config, {mode:0o600});
+NODE
+}
+
 up() {
   [[ ! -e "$fixture" ]] || fail setup "fixture already up; run down first"
+  local ownership
+  ownership=$(lane_ownership_mode) || return 1
   for tool in docker node npm jq go sessionbus sessionbus-call openssl; do need "$tool"; done
   mkdir -p "$state/ws/lane/sub" "$state/ws/b/sub" "$state/ws/decoy-real" "$state/decoy/x" "$state/mock-log" "$state/pkg" "$state/config" "$bin"
   chmod -R a+rwX "$state/ws" "$state/decoy" "$state/mock-log"
@@ -206,15 +246,7 @@ up() {
   export LANE_BRIDGE_PORT
   printf 'LANE_BRIDGE_PORT=%q\n' "$LANE_BRIDGE_PORT" >>"$fixture"
   gateway_token=$(openssl rand -hex 32)
-  node - "$LANE_SMOKE_ROOT/openclaw.json5" "$state/config/openclaw.json" "$lane_root" "$b_root" "$decoy_real_root" "$gateway_token" "$state/permission-audit.log" <<'NODE'
-const fs = require('node:fs');
-const [source, dest, lane, b, decoy, token, audit] = process.argv.slice(2);
-let config = fs.readFileSync(source, 'utf8');
-for (const [key, value] of Object.entries({__LANE_ROOT__:lane,__B_ROOT__:b,__DECOY_REAL_ROOT__:decoy,'{{GATEWAY_TOKEN}}':token,__AUDIT_LOG__:audit})) {
-  config = config.replaceAll(key, value);
-}
-fs.writeFileSync(dest, config, {mode:0o600});
-NODE
+  render_lane_config "$LANE_SMOKE_ROOT/openclaw.json5" "$state/config/openclaw.json" "$lane_root" "$b_root" "$decoy_real_root" "$gateway_token" "$state/permission-audit.log" "$ownership"
   # The file carries the live Gateway admin token (openclaw.json5's
   # {{GATEWAY_TOKEN}} substitution above); a+rw made it world-writable for the fixture's
   # lifetime. chown it to the container's own uid (matching the /lane-cli chown below) via a
@@ -269,7 +301,7 @@ SH
     (( SECONDS < deadline )) || fail setup "private daemon socket timed out"
     sleep .1
   done
-  pass setup "private daemon $socket; Docker fixture ready"
+  pass setup "private daemon $socket; Docker fixture ready; ownership=$ownership"
 }
 
 load_fixture() {

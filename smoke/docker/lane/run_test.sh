@@ -862,6 +862,61 @@ test_admin_guard_documented() {
   grep -q 'admin.*hard refusal' "$lane_readme" || { echo "lane README omits admin refusal" >&2; return 1; }
 }
 
+test_lane_ownership_defaults() {
+  local OPENCLAW_IMAGE LANE_SMOKE_OWNERSHIP actual image expected
+  LANE_SMOKE_OWNERSHIP=""
+  while read -r image expected; do
+    OPENCLAW_IMAGE="$image"
+    actual=$(lane_ownership_mode) || return 1
+    [[ "$actual" == "$expected" ]] || { echo "$image: got $actual, expected $expected" >&2; return 1; }
+  done <<'CASES'
+ghcr.io/openclaw/openclaw:2026.8.2 marker
+ghcr.io/openclaw/openclaw:2026.9.6 marker
+ghcr.io/openclaw/openclaw:2026.10.9 explicit
+ghcr.io/openclaw/openclaw:2027.1.0 explicit
+custom/image:latest explicit
+custom/image:2026.8.2 marker
+custom/image explicit
+localhost:5000/custom/image explicit
+custom/image@sha256:abcdef explicit
+CASES
+  OPENCLAW_IMAGE=custom/image:2026.10.9
+  LANE_SMOKE_OWNERSHIP=marker
+  [[ "$(lane_ownership_mode)" == marker ]] || return 1
+  OPENCLAW_IMAGE=custom/image:2026.8.2
+  LANE_SMOKE_OWNERSHIP=explicit
+  [[ "$(lane_ownership_mode)" == explicit ]] || return 1
+  LANE_SMOKE_OWNERSHIP=invalid
+  if (lane_ownership_mode >/dev/null 2>&1); then echo 'invalid mode accepted' >&2; return 1; fi
+}
+
+test_lane_ownership_render() {
+  local rendered_dir mode
+  rendered_dir=$(mktemp -d)
+  trap 'rm -rf "$rendered_dir"' RETURN
+  for mode in marker explicit; do
+    render_lane_config "$LANE_SMOKE_ROOT/openclaw.json5" "$rendered_dir/$mode.json" /tmp/lane /tmp/b /tmp/decoy test-token /tmp/audit "$mode"
+    node - "$rendered_dir/$mode.json" "$mode" <<'NODE'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const explicit = process.argv[3] === 'explicit';
+assert.equal(config.agents.ownership, explicit ? 'explicit' : undefined);
+assert.equal(config.agents.entries.lane.default, explicit ? undefined : true);
+for (const key of ['heartbeat', 'systemAgent', 'authInheritance']) {
+  assert.deepEqual(config.agents.defaults[key], explicit ? {agentId:'lane'} : undefined);
+}
+assert.equal(config.agents.defaults.model.primary, 'mock/mock-a');
+assert.equal(config.agents.entries.lane.workspace, '/tmp/lane');
+assert.equal(config.agents.entries.b.workspace, '/tmp/b');
+assert.equal(config.agents.entries.decoy.workspace, '/tmp/decoy');
+assert.equal(config.gateway.auth.token, 'test-token');
+assert.equal(config.plugins.entries.sessionbus.config.lanes.auditLog, '/tmp/audit');
+assert.equal(fs.statSync(process.argv[2]).mode & 0o777, 0o600);
+NODE
+  done
+}
+
 test_bridge_loss_clause() {
   local target="$1" test_dir mode="${2:-good}" output
   test_dir=$(mktemp -d)
@@ -954,6 +1009,8 @@ if [[ $# == 0 ]]; then
 fi
 
 case "${1:-}" in
+  lane-ownership-defaults) test_lane_ownership_defaults ;;
+  lane-ownership-render) test_lane_ownership_render ;;
   bridge-loss-retain)
     test_bridge_loss_clause bridge-loss-retain
     for mode in lost changed wrong-reason submitted; do

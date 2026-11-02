@@ -29,6 +29,8 @@ The Gateway defaults to `ghcr.io/openclaw/openclaw:2026.8.2`. Set
 specific image. Published images include extra plugins such as `codex` and
 `diagnostics-otel`; the clauses do not depend on the complete tool list.
 
+The lane agents run in one of two roster modes: `LANE_SMOKE_OWNERSHIP=marker` keeps the legacy `default: true` marker, and `LANE_SMOKE_OWNERSHIP=explicit` removes that marker and sets `agents.ownership: "explicit"` with heartbeat, system-agent, and auth-inheritance owners set to `lane`. By default, versions before 2026.10 use `marker` (explicit ownership breaks pairing on 8.2 and workspace plugin discovery on 9.6); versions 2026.10 and later use `explicit`. A custom `OPENCLAW_IMAGE` defaults to `explicit` unless its tag parses as an older release. The override wins over version selection, and the setup PASS line prints the chosen mode.
+
 `up` generates an ignored config and workspace tree under `.state/`, builds the worker and an
 `openclaw` Docker shim into `.bin/`, starts Docker services and the host half of the tunnel, provisions the lane's device
 credential, then starts a private daemon at a short `/tmp/ocl.*/p.sock` path. The daemon uses
