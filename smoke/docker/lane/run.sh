@@ -15,7 +15,7 @@ admin_bridge_pid=""
 compose=(docker compose -f smoke/docker/lane/compose.yaml)
 export OPENCLAW_IMAGE="${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:${OPENCLAW_VERSION:-2026.8.2}}"
 source smoke/docker/codex-lib.sh
-clauses=(describe-fields agent-choice spawn-open run-answer interrupt close resume-history permission-answered slash-refused directive-neutralized model-session-only model-refused-lists thinking-requested cwd-honoured cwd-isolated cwd-outside-refused busy-mid busy-mid-codex lane-voice admin-guard)
+clauses=(describe-fields agent-choice spawn-open run-answer interrupt close resume-history permission-answered slash-refused directive-neutralized model-session-only model-refused-lists thinking-requested cwd-honoured cwd-isolated cwd-outside-refused busy-mid busy-mid-codex lane-voice admin-guard bridge-loss-retain bridge-loss-mid-run)
 
 fail() { printf '%s: FAIL — %s\n' "$1" "$2" >&2; exit 1; }
 pass() { printf '%s: PASS — %s\n' "$1" "$2"; }
@@ -32,7 +32,7 @@ spawn() {
   # calls in the same clause still diverge.
   local out payload name
   name="lane-smoke-${clause}-$RANDOM$RANDOM"
-  payload=$(json --arg name "$name" --argjson open "$1" '{product:"openclaw-peer",name:$name,persistent:true,notify:false,extra_groups:["lanesmoke"],open:$open}')
+  payload=$(json --arg name "$name" --argjson open "$1" --argjson auto_close "${2:-null}" '{product:"openclaw-peer",name:$name,persistent:true,notify:false,extra_groups:["lanesmoke"],open:$open} | if $auto_close == null then . else . + {auto_close_ms:$auto_close} end')
   out=$(rpc lane.spawn "$payload")
   jq -er '.session_id' <<<"$out" || fail "$clause" "spawn gave no session_id: ${out:0:300}"
 }
@@ -99,6 +99,13 @@ audit_since() { tail -n "+$(($1 + 1))" "$state/permission-audit.log" 2>/dev/null
 recipient_marker_seen() {
   mock_log_since "$1" | jq -se --arg marker "$2" --arg root "$3" \
     'any(.[]; (.lastUser // "") as $u | ($u | contains($marker)) and ($u | contains($root)))' >/dev/null
+}
+
+# The plugin restart closes old worker connections. Prove loss with the
+# clause's refused Run after checking retention; worker stderr is not in daemon.log.
+restart_bridge_loss() {
+  "${compose[@]}" restart openclaw-gateway || fail "$clause" "Gateway restart failed"
+  wait_bridge
 }
 
 provision_credential() {
@@ -559,6 +566,67 @@ check_clause() {
       done
       close_lane "$id"; close_lane "$id2"
       pass "$clause" "lane $id sent $marker through the bridge (bus.action); $id2 received it"
+      ;;
+    bridge-loss-retain)
+      id=$(spawn "$(agent_open lane)" 0)
+      first=$(run "$id" 'hello ECHO bridge-loss-retain')
+      jq -e '.state=="done" and .result.outcome=="completed" and (.result.result | contains("ECHO"))' <<<"$first" >/dev/null || fail "$clause" "initial run incomplete: $first"
+      ref=$(jq -er '.run_id' <<<"$first")
+      restart_bridge_loss
+      sleep 35
+      for method in turn.status turn.wait; do
+        out=$(rpc "$method" "$(json --arg id "$id" --arg ref "$ref" '{session_id:$id,run_id:$ref}')")
+        jq -e --argjson original "$first" '.state==$original.state and .run_id==$original.run_id and .result==$original.result' <<<"$out" >/dev/null || fail "$clause" "$method changed retained result: $out"
+      done
+      local loss_mark refused_ref loss_marker="BRIDGE_LOSS_REFUSED_${RANDOM}_$$"
+      loss_mark=$(mock_log_mark)
+      out=$(run "$id" "$loss_marker")
+      jq -e '.state=="unavailable" and .reason=="lane bridge lost"' <<<"$out" >/dev/null || fail "$clause" "bridge was not lost: new Run was not refused: $out"
+      refused_ref=$(jq -er '.run_id' <<<"$out")
+      mock_log_since "$loss_mark" | jq -se --arg marker "$loss_marker" 'all(.[]; (tostring | contains($marker)) | not)' >/dev/null || fail "$clause" "refused input reached mock"
+      for ref in "$ref" "$refused_ref"; do
+        rpc turn.ack "$(json --arg id "$id" --arg ref "$ref" '{session_id:$id,run_id:$ref}')" >/dev/null
+      done
+      close_lane "$id"
+      out=$(sb turn.status "$(json --arg id "$id" '{session_id:$id}')" 2>&1) && fail "$clause" "status succeeded after close: $out"
+      [[ "$out" == *unknown_session* ]] || fail "$clause" "close did not yield unknown_session: $out"
+      pass "$clause" "unchanged status/wait after 35 s; new input refused without model request; close yields unknown_session"
+      ;;
+    bridge-loss-mid-run)
+      id=$(spawn "$(agent_open lane)" 0)
+      local slow_mark slow_deadline terminal
+      slow_mark=$(mock_log_mark)
+      start=$(rpc turn.start "$(json --arg id "$id" '{session_id:$id,input:"SLOW bridge-loss-mid-run"}')")
+      ref=$(jq -er '.run_id' <<<"$start")
+      slow_deadline=$((SECONDS+60))
+      until mock_log_since "$slow_mark" | jq -se 'any(.[]; (.lastUser // "") | contains("SLOW bridge-loss-mid-run"))' >/dev/null; do
+        (( SECONDS < slow_deadline )) || fail "$clause" "SLOW run never reached model"
+        sleep 1
+      done
+      out=$(rpc turn.status "$(json --arg id "$id" --arg ref "$ref" '{session_id:$id,run_id:$ref}')")
+      jq -e '.state=="running"' <<<"$out" >/dev/null || fail "$clause" "run was not active before restart: $out"
+      restart_bridge_loss
+      slow_deadline=$((SECONDS+120))
+      while :; do
+        terminal=$(rpc turn.wait "$(json --arg id "$id" --arg ref "$ref" '{session_id:$id,run_id:$ref,timeout_ms:10000}')")
+        [[ "$(jq -r '.state' <<<"$terminal")" == running ]] || break
+        (( SECONDS < slow_deadline )) || fail "$clause" "run never reached terminal: $terminal"
+      done
+      jq -e '.state=="done" and (.result.outcome=="completed" or .result.outcome=="failed" or .result.outcome=="interrupted")' <<<"$terminal" >/dev/null || fail "$clause" "no collectable native terminal: $terminal"
+      sleep 35
+      out=$(rpc turn.status "$(json --arg id "$id" --arg ref "$ref" '{session_id:$id,run_id:$ref}')")
+      jq -e --argjson original "$terminal" '.state==$original.state and .run_id==$original.run_id and .result==$original.result' <<<"$out" >/dev/null || fail "$clause" "terminal not retained after 35 s: $out"
+      local loss_mark refused_ref loss_marker="BRIDGE_LOSS_REFUSED_${RANDOM}_$$"
+      loss_mark=$(mock_log_mark)
+      second=$(run "$id" "$loss_marker")
+      jq -e '.state=="unavailable" and .reason=="lane bridge lost"' <<<"$second" >/dev/null || fail "$clause" "bridge was not lost: new Run was not refused: $second"
+      refused_ref=$(jq -er '.run_id' <<<"$second")
+      mock_log_since "$loss_mark" | jq -se --arg marker "$loss_marker" 'all(.[]; (tostring | contains($marker)) | not)' >/dev/null || fail "$clause" "refused input reached mock"
+      for ref in "$ref" "$refused_ref"; do
+        rpc turn.ack "$(json --arg id "$id" --arg ref "$ref" '{session_id:$id,run_id:$ref}')" >/dev/null
+      done
+      close_lane "$id"
+      pass "$clause" "collectable after 35 s: state=$(jq -r '.state' <<<"$out") outcome=$(jq -r '.result.outcome' <<<"$out") run=$(jq -r '.run_id' <<<"$out"); new input refused without model request"
       ;;
     admin-guard)
       # Live proof of the runtime admin guard. A worker whose Gateway

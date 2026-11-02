@@ -862,7 +862,118 @@ test_admin_guard_documented() {
   grep -q 'admin.*hard refusal' "$lane_readme" || { echo "lane README omits admin refusal" >&2; return 1; }
 }
 
+test_bridge_loss_clause() {
+  local target="$1" test_dir mode="${2:-good}" output
+  test_dir=$(mktemp -d)
+  trap 'rm -rf "$test_dir"' RETURN
+  tmp="$test_dir"
+  local calls="$test_dir/calls"
+  compose=(fake_compose)
+  fake_compose() {
+    echo "compose $*" >>"$calls"
+    touch "$test_dir/restarted"
+  }
+  sleep() { echo "sleep $*" >>"$calls"; }
+  wait_bridge() { echo wait_bridge >>"$calls"; }
+  mock_log_mark() { echo 0; }
+  mock_log_since() {
+    echo '{"lastUser":"SLOW bridge-loss-mid-run"}'
+    if [[ "$mode" == submitted ]]; then
+      jq -nc --arg input "$(cat "$test_dir/input")" '{lastUser:$input}'
+    fi
+  }
+  sb() {
+    echo "$1 $2" >>"$calls"
+    case "$1" in
+      lane.spawn)
+        jq -e '.auto_close_ms==0' <<<"$2" >/dev/null || return 1
+        echo '{"session_id":"agent:lane:sb-test"}' ;;
+      turn.run)
+        if [[ "$2" == *BRIDGE_LOSS_REFUSED* ]]; then
+          if [[ "$mode" == not-lost ]]; then
+            echo '{"run_id":"r2","state":"done","result":{"outcome":"completed","result":"still connected"}}'; return
+          fi
+          jq -r '.input' <<<"$2" >"$test_dir/input"
+          jq -nc --arg reason "$([[ "$mode" == wrong-reason ]] && echo other || echo 'lane bridge lost')" '{run_id:"r2",state:"unavailable",reason:$reason}'
+        else
+          echo '{"run_id":"r1","state":"done","result":{"outcome":"completed","result":"ECHO retained"}}'
+        fi ;;
+      turn.start) echo '{"run_id":"r1"}' ;;
+      turn.status)
+        if [[ "$target" == bridge-loss-mid-run && ! -f "$test_dir/restarted" ]]; then
+          echo '{"run_id":"r1","state":"running"}'; return
+        fi
+        if [[ "$mode" == lost ]] || [[ -f "$test_dir/closed" ]]; then
+          echo '{"error":{"code":"unknown_session"}}'; return 1
+        fi
+        jq -nc --arg text "$([[ "$mode" == changed ]] && echo changed || echo 'ECHO retained')" '{run_id:"r1",state:"done",result:{outcome:"completed",result:$text}}' ;;
+      turn.wait) echo '{"run_id":"r1","state":"done","result":{"outcome":"completed","result":"ECHO retained"}}' ;;
+      session.close) touch "$test_dir/closed"; echo '{}' ;;
+      turn.ack) echo '{}' ;;
+      *) echo "unexpected $1" >&2; return 1 ;;
+    esac
+  }
+  if [[ "$mode" != good ]]; then
+    if output=$(check_clause "$target" 2>&1); then
+      echo "$target accepted $mode" >&2; return 1
+    fi
+    case "$mode" in
+      lost) [[ "$output" == *'turn.status:'*unknown_session* ]] ;;
+      changed) [[ "$output" == *'retained'* || "$output" == *'terminal not retained'* ]] ;;
+      wrong-reason|not-lost) [[ "$output" == *'bridge was not lost'* ]] ;;
+      submitted) [[ "$output" == *'refused input reached mock'* ]] ;;
+    esac || { echo "wrong failure: $output" >&2; return 1; }
+    return
+  fi
+  output=$(check_clause "$target" 2>&1) || { echo "$output" >&2; return 1; }
+  [[ "$output" == *"$target: PASS"* ]] || return 1
+  grep -q 'compose restart openclaw-gateway' "$calls" || return 1
+  grep -q '^sleep 35$' "$calls" || return 1
+  [[ "$(grep -c '^wait_bridge$' "$calls")" == 1 ]] || return 1
+  # Recovery must precede the retention wait; no tunnel-restart fallback.
+  awk '/^compose restart openclaw-gateway$/ {restart=1; next}
+       /^wait_bridge$/ {if (!restart) exit 1; ready=1; next}
+       /^sleep 35$/ {if (!ready) exit 1; waited=1}
+       END {if (!waited) exit 1}' "$calls" || return 1
+  ! grep -q 'compose restart bridge-tunnel' "$calls" || return 1
+  [[ "$(grep -c '^turn.ack ' "$calls")" == 2 ]] || return 1
+  grep -q 'turn.ack .*"run_id":"r1"' "$calls" || return 1
+  grep -q 'turn.ack .*"run_id":"r2"' "$calls" || return 1
+  if [[ "$target" == bridge-loss-mid-run ]]; then
+    [[ "$output" == *'state=done outcome=completed'* ]] || return 1
+  fi
+}
+
+if [[ $# == 0 ]]; then
+  # Run each focused case in a fresh shell: stubs must not leak between cases.
+  while read -r focused; do
+    bash "$0" "$focused"
+    printf '%s: PASS\n' "$focused"
+  done < <(sed -n 's/^  \([a-z][a-z0-9-]*\)).*/\1/p' "$0")
+  exit 0
+fi
+
 case "${1:-}" in
+  bridge-loss-retain)
+    test_bridge_loss_clause bridge-loss-retain
+    for mode in lost changed wrong-reason submitted; do
+      (test_bridge_loss_clause bridge-loss-retain "$mode")
+    done ;;
+  bridge-loss-not-lost)
+    (test_bridge_loss_clause bridge-loss-mid-run not-lost)
+    (test_bridge_loss_clause bridge-loss-retain not-lost) ;;
+  bridge-loss-unknown-session)
+    (test_bridge_loss_clause bridge-loss-retain lost)
+    (test_bridge_loss_clause bridge-loss-mid-run lost) ;;
+  bridge-loss-mid-run)
+    test_bridge_loss_clause bridge-loss-mid-run
+    for mode in lost changed wrong-reason submitted; do
+      (test_bridge_loss_clause bridge-loss-mid-run "$mode")
+    done ;;
+  bridge-loss-docs)
+    for name in bridge-loss-retain bridge-loss-mid-run; do
+      grep -q "\`$name\`" smoke/docker/lane/README.md || { echo "README missing $name" >&2; exit 1; }
+    done ;;
   cwd-permissions) test_cwd_permissions ;;
   spawn-names-unique) test_spawn_names_are_unique_per_call ;;
   provision-credential-helper-failure) test_provision_credential_reports_helper_failure ;;
